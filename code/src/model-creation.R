@@ -78,19 +78,22 @@ ggplot(gbm_mod) + theme(legend.position = "top")
 
 
 # Plot:
-plot_roc <- function(x, ...) {
-     averaged <- x %>%
-          group_by(rowIndex, obs) %>%
-          summarise(Yes = mean(Yes, na.rm = TRUE))
-     roc_obj <- roc(
-          response = x[["obs"]], 
-          predictor = x[["Yes"]], 
-          levels = rev(levels(x$obs))
-     )
-     plot(roc_obj, ...)
+plot_roc <- function(x) {
+        averaged <- x %>%
+                group_by(rowIndex, obs) %>%
+                summarise(Yes = mean(Yes, na.rm = TRUE))
+        roc_obj <- roc(
+                response = x[["obs"]], 
+                predictor = x[["Yes"]], 
+                levels = rev(levels(x$obs))
+        )
+        return(roc_obj)
 }
 
-plot_roc(gbm_mod$pred)
+roc_gbm <- plot_roc(gbm_mod$pred)
+roc_nb <- plot_roc(nb_mod$pred)
+roc_rf <- plot_roc(rf_mod$pred)
+ggroc(list(GBM=roc_gbm, NB=roc_nb))
 
 
 # Model 2 Setup ---------------------------------------------------------------------------------------------------

@@ -25,7 +25,7 @@ library(ggROC)
 
 # loading data ------------------------------------------------------------------------------
 
-churn_data <- read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv") %>% 
+churn_data <- read_csv("data/src/WA_Fn-UseC_-Telco-Customer-Churn.csv") %>% 
      filter(!is.na(TotalCharges)) %>%
      select(-customerID)
 

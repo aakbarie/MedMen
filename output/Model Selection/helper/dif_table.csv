@@ -1,0 +1,3 @@
+﻿contrast,probability,mean,lower,upper,size,pract_neg,pract_equiv,pract_pos
+Boosting vs randomForest,0.866,0.0102,-0.00531,0.0257,0.1,0,1,0
+NaiveB vs Boosting,0.0109,-0.0218,-0.0373,-0.00659,0.1,0,1,0

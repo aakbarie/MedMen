@@ -1,148 +1,17 @@
 ---
 title: "MedMen Model Selection"
-subtitle: "A look at customer churn"
 author: "Akbar Akbari Esfahani"
 date: "12/3/2018"
-output: 
-     ioslides_presentation:
-          widescreen: true
-          smaller: true
+output:
+  ioslides_presentation:
+    smaller: yes
+    widescreen: yes
+  slidy_presentation: default
+  beamer_presentation: default
+subtitle: A look at customer churn
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
 
-library(tidyposterior)
-library(plyr)
-library(caret)
-library(randomForest)
-library(tidymodels)
-library(gbm)
-library(DataExplorer)
-library(tidyverse)
-library(pROC)
-library(ggROC)
-
-# loading data ------------------------------------------------------------------------------
-
-churn_data <- read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv") %>% 
-     filter(!is.na(TotalCharges)) %>%
-     select(-customerID)
-
-
-# data sampling -----------------------------------------------------------------------------
-
-seed <- 7312
-set.seed(seed)
-data_split <- initial_split(churn_data, strata = "Churn")
-churn_train <- training(data_split)
-churn_test  <- testing(data_split)
-
-trainX <- churn_train %>%
-     select(-Churn)
-trainY <- churn_train %>%
-     select(Churn)
-
-
-# creating recipe ---------------------------------------------------------------------------
-
-basic_rec <- recipe(Churn ~ ., data = churn_train) %>%
-     step_zv(all_predictors()) %>%
-     step_dummy(all_predictors()) %>%
-     step_center(all_predictors()) %>%
-     step_scale(all_predictors())
-
-
-# Model 1 setup -----------------------------------------------------------------------------
-
-metric <- "ROC"
-
-gbmGrid <- expand.grid(
-                       n.trees = seq(100, 500, 100),
-                       interaction.depth = 2,
-                       shrinkage = .07,
-                       n.minobsinnode = 10)
-     
-ctrl <- trainControl(method = "cv",
-                     classProbs = TRUE,
-                     summaryFunction = twoClassSummary,
-                     savePredictions = "final")
-
-
-# Model 1 run -------------------------------------------------------------------------------
-
-set.seed(seed)
-
-gbm_mod <- train(basic_rec, 
-                 data = churn_train, 
-                 method = "gbm",
-                 tuneGrid = gbmGrid,
-                 trControl = ctrl,
-                 metric = metric,
-                 verbose = FALSE)
-
-
-
-# model accuracy ----------------------------------------------------------------------------
-mod_roc <- function(x) {
-     averaged <- x %>%
-          group_by(rowIndex, obs) %>%
-          summarise(Yes = mean(Yes, na.rm = TRUE))
-     roc_obj <- roc(
-          response = x[["obs"]], 
-          predictor = x[["Yes"]], 
-          levels = rev(levels(x$obs))
-     )
-     return(roc_obj)
-}
-
-# Model 2 Setup -----------------------------------------------------------------------------
-
-set.seed(seed)
-
-rfGrid <- expand.grid(.mtry = seq(1, 10, 0.5))
-
-
-# Model 2 run -------------------------------------------------------------------------------
-
-rf_mod <- train(basic_rec, 
-                data = churn_train, 
-                method = "rf",
-                tuneGrid = rfGrid,
-                trControl = ctrl,
-                metric = metric,
-                ntree = 1000,
-                verbose = FALSE)
-
-
-
-# Model 3 -----------------------------------------------------------------------------------
-
-set.seed(seed)
-is_two_levels <- function(x) length(unique(x)) == 2 & is.numeric(x)
-probably_dummy <- vapply(churn_train, is_two_levels, logical(1))
-dummies <- names(probably_dummy)[probably_dummy]
-
-no_dummies <- recipe(Churn ~ ., data = churn_train) %>%
-     step_bin2factor(!!! dummies) %>%
-     step_zv(all_predictors())
-
-nbGrid <- expand.grid(usekernel = TRUE,
-                              fL = 0.4, 
-                              adjust = seq(0.5, 5, by = 0.5))
-
-nb_mod <- train(
-     no_dummies,
-     data = churn_train,
-     method = "nb",
-     metric = "ROC",
-     tuneGrid = nbGrid,
-     trControl = ctrl
-)
-
-
-# model accuracy ----------------------------------------------------------------------------
-```
 
 ## Outline
 
@@ -159,20 +28,12 @@ nb_mod <- train(
 
 ## Models used
 
-* Generalized Boosted Modeling
+* Generalized Boosted Modeling (GBM), Classification And Regression Tree (CART), Naive Bayes (NB)
 
-* Random Forest
 
-* Naive Bayes
+ROC Curves for all three models
 
-below is the ROC Curves for all three models
-```{r rocCurve, echo=FALSE, message=FALSE}
-roc_gbm <- mod_roc(gbm_mod$pred)
-roc_rf <- mod_roc(rf_mod$pred)
-roc_nb <- mod_roc(nb_mod$pred)
-
-ggroc(list(GBM=roc_gbm, RF=roc_rf, NB=roc_nb))
-```
+![](roc_plot.png)
 
 
 # Model Selection
@@ -181,58 +42,32 @@ ggroc(list(GBM=roc_gbm, RF=roc_rf, NB=roc_nb))
 
 * get all cross-validations from models
 
-* estimate the relationsship between outcome metric, as measured by our model (in our case AUC) and the joint variance of the cross validation steps.
+* estimate the relationship between outcome metric, as measured by our model (in our case AUC) and the joint variance of the cross validation steps.
 
-* We run a simple linear regression using a 5000 cycle Markov Chain Monte Carlo simulation to find the distribution of our cross validation measured metric
+* We run a simple linear regression using a 5000 cycle Markov Chain Monte Carlo simulation to find the distribution of our cross-validation measured metric
 
 * Estimate the difference between models
 
 ## Distribution of all Model Metrics (ROC)
 
-```{r, include=FALSE}
-rs <- resamples(
-     list(Boosting = gbm_mod, RndmFrst = rf_mod, NaiveB = nb_mod)
-)
-
-roc_mod <- perf_mod(rs, seed = seed, iter = 5000)
-
-roc_dist <- tidy(roc_mod)
-```
-
-```{r, echo=FALSE}
-ggplot(roc_dist)
-```
+![](roc_dist.png)
 
 ## Difference between Models
 
 We have about 1700 people that left, so assuming that a 5% churn rate a year makes a difference, we need to base our model selection on those 5% making a difference
 
-```{r, include=FALSE}
-differences <-
-     contrast_models(
-          roc_mod,
-          list_1 = c("RndmFrst", "NaiveB"),
-          list_2 = c("Boosting", "RndmFrst"),
-          seed = 650
-     )
-```
-
 ```{r, echo=FALSE}
-summary(differences, size = 0.05)
+library(readr)
+dif <- suppressMessages(read_csv("helper/dif_table.csv"))
+knitr::kable(dif)
 ```
 
 ## Visualizing the difference
 
-```{r, echo=FALSE}
-differences %>%
-     mutate(contrast = paste(model_2, "vs", model_1)) %>%
-     ggplot(aes(x = difference, col = contrast)) + 
-     geom_line(stat = "density") + 
-     geom_vline(xintercept = c(-0.05, 0.05), lty = 2)
-```
+![](dif_cont.png)
 
 ## Deciding on the winner
 
-From our visuals and our statistics, the model that creates the least churn rate is the generalized boosting allgorithm.
+From our statistics, there is no practical difference between the three models, so we would choose the model with fastest performance, in this case, it is the GBM model, which also happens to have highest AUC score.
 
-I would then use the model to create a custom cutoff rate that would allow us to even better predict those customer that are likely to leave and sacrafice those that are stayers. Reaching out to people that would have stayed makes for a better impression while also reaching to more people that are likely to leave.
+I would then use the model to create a custom cutoff rate that would allow us to even better predict those customers that are likely to leave and sacrifice those that are stayers. Reaching out to people that would have stayed makes for a better impression while also reaching to more people that are likely to leave.

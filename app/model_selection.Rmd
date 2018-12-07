@@ -4,6 +4,7 @@ output:
   flexdashboard::flex_dashboard:
     orientation: columns
     vertical_layout: fill
+runtime: shiny
 ---
 
 ```{r setup, include=FALSE}
@@ -33,7 +34,8 @@ seed <- 7312
 set.seed(seed)
 data_split <- initial_split(churn_data, strata = "Churn")
 churn_train <- training(data_split)
-churn_test  <- testing(data_split)
+churn_test  <- testing(data_split) %>%
+  mutate(Churn = as.factor(Churn))
 
 trainX <- churn_train %>%
      select(-Churn)
@@ -67,6 +69,8 @@ ctrl <- trainControl(method = "cv",
                      savePredictions = "final")
 ```
 
+Model Selection
+===================================== 
 
 Column {data-width=350}
 -----------------------------------------------------------------------
@@ -119,39 +123,30 @@ rf_mod <- train(basic_rec,
 
 roc_rf <- plot_roc(rf_mod$pred)
 
-ggroc(roc_rf, alpha = 0.5, colour = "red", size = 1.5)
+ggroc(roc_rf, alpha = 0.5, colour = "green", size = 1.5)
 ```
 
 ### Model 3 Performance
 
 ```{r}
 set.seed(seed)
-is_two_levels <- function(x) length(unique(x)) == 2 & is.numeric(x)
-probably_dummy <- vapply(churn_train, is_two_levels, logical(1))
-dummies <- names(probably_dummy)[probably_dummy]
+svm_grid <- expand.grid(.C = .05,
+                          .sigma = .05)
 
-no_dummies <- recipe(Churn ~ ., data = churn_train) %>%
-     step_bin2factor(!!! dummies) %>%
-     step_zv(all_predictors())
-
-nbGrid <- expand.grid(usekernel = TRUE,
-                              fL = 0.4, 
-                              adjust = seq(0.5, 5, by = 0.5))
-
-nb_mod <- train(
+svm_mod <- train(
      no_dummies,
      data = churn_train,
-     method = "nb",
+     method = "svmRadial",
      metric = "ROC",
-     tuneGrid = nbGrid,
+     tuneGrid = svm_Grid,
      trControl = ctrl
 )
 
 # model accuracy ----------------------------------------------------------------------------
 
-roc_nb <- plot_roc(nb_mod$pred)
+roc_svm <- plot_roc(svm_mod$pred)
 
-ggroc(list(randomForest=roc_rf, naiveBayes=roc_nb, GBM=roc_gbm))
+ggroc(roc_svm, alpha = 0.5, colour = "blue", size = 1.5)
 ```
 
 Column {data-width=650}
@@ -159,14 +154,94 @@ Column {data-width=650}
 
 ### Model Selection
 
-```{r, echo=FALSE}
+```{r, include=FALSE}
 rs <- resamples(
-     list(Boosting = gbm_mod, RndmFrst = rf_mod, NaiveB = nb_mod)
+     list(Boosting = gbm_mod, RndmFrst = rf_mod, SVM = svm_mod)
 )
 
 roc_mod <- suppressMessages(perf_mod(rs, seed = seed, iter = 5000))
 
 roc_dist <- tidy(roc_mod)
+```
 
+```{r}
 ggplot(roc_dist)
+```
+
+
+Model Appliction
+===================================== 
+
+```{r, include=FALSE}
+test_res <- churn_test %>%
+    dplyr::select(Churn) %>%
+  mutate(Churn = factor(Churn)) %>%
+    mutate(
+        pred = factor(predict(mars_mod, churn_test)),
+        No = predict(mars_mod, churn_test, type = "prob")[, "No"],
+        Yes = predict(mars_mod, churn_test, type = "prob")[, "Yes"]
+    ) %>%
+  data.frame
+roc_curve <- roc(test_res$Churn, test_res$prob, levels = c("No", "Yes"))
+
+prediction <- predict(mars_mod, churn_test %>% select(-Churn))
+
+temp <- confusionMatrix(prediction, churn_test$Churn)
+```
+
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Method used
+
+We used Bayesian Hierarchical Linear Model to make our model selection. The distribution of the variance parameters are the prior distributions. The `tidyposterior` package, using *Stan*, is used to perform Bayesian analysis to estimate the probability distribution of the model parameters. Next, we make our decision looking at the difference between the models and selecting the best model that fits in our required business parameter or a practical value that represents our interest.
+
+
+### Model Difference Visualization
+
+```{r}
+ggroc(roc_curve, alpha = 0.5, colour = "blue", size = 1.5)
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Confusion Matrix {.value-box}
+
+```{r table}
+renderValueBox({
+  rate <- formatC(temp$table, digits = 0, format = "f")
+  valueBox(
+    value = rate,
+    icon = "fa-area-chart",
+    color = if (rate < 80) "warning" else "primary"
+  )
+})
+```
+
+### Sensitivity False Prediction rate of Member staying {.value-box}
+
+```{r sens}
+renderValueBox({
+  rate <- formatC(temp$byClass[1], digits = 2, format = "f")
+  valueBox(
+    value = rate,
+    icon = "fa-area-chart",
+    color = if (rate < 80) "warning" else "primary"
+  )
+})
+```
+
+### Specificity - False Prediction rate of Member leaving {.value-box}
+
+```{r sens}
+renderValueBox({
+  rate <- formatC(temp$byClass[2], digits = 2, format = "f")
+  valueBox(
+    value = rate,
+    icon = "fa-area-chart",
+    color = if (rate < 50) "warning" else "primary"
+  )
+})
 ```

@@ -9,7 +9,7 @@ runtime: shiny
 
 ```{r setup, include=FALSE}
 library(flexdashboard)
-
+library(ggROC)
 library(tidyposterior)
 library(plyr)
 library(caret)
@@ -19,7 +19,7 @@ library(gbm)
 library(DataExplorer)
 library(tidyverse)
 library(pROC)
-
+library(e1071)
 
 # loading data -------------------------------------------------------------------------------
 
@@ -53,46 +53,20 @@ plot_roc <- function(x) {
         )
         return(roc_obj)
 }
-# creating recipe ----------------------------------------------------------------------------
 
-basic_rec <- recipe(Churn ~ ., data = churn_train) %>%
-     step_zv(all_predictors()) %>%
-     step_dummy(all_predictors()) %>%
-     step_center(all_predictors()) %>%
-     step_scale(all_predictors())
-
-metric <- "ROC"
-
-ctrl <- trainControl(method = "cv",
-                     classProbs = TRUE,
-                     summaryFunction = twoClassSummary,
-                     savePredictions = "final")
 ```
 
 Model Selection
 ===================================== 
 
-Column {data-width=350}
+Column {data-width=250}
 -----------------------------------------------------------------------
 
-### Model 1 Performance
+### Model 1 Performance (Generalized Boosted Modeling)
 
 ```{r}
-set.seed(seed)
 
-gbmGrid <- expand.grid(n.trees = 100,
-                       interaction.depth = 2,
-                       shrinkage = .07,
-                       n.minobsinnode = 10)
-     
-gbm_mod <- train(basic_rec, 
-                 data = churn_train, 
-                 method = "gbm",
-                 tuneGrid = gbmGrid,
-                 trControl = ctrl,
-                 metric = metric,
-                 verbose = FALSE)
-
+load("models/gbm_mod.Rdata")
 
 
 # model accuracy ----------------------------------------------------------------------------
@@ -102,45 +76,22 @@ roc_gbm <- plot_roc(gbm_mod$pred)
 ggroc(roc_gbm, alpha = 0.5, colour = "red", size = 1.5)
 ```
 
-### Model 2 Performance
+### Model 2 Performance (Random Forest)
 
 ```{r}
-rfGrid <- expand.grid(.mtry = 4.5)
-
-
-# Model 2 run -------------------------------------------------------------------------------
-
-rf_mod <- train(basic_rec, 
-                data = churn_train, 
-                method = "rf",
-                tuneGrid = rfGrid,
-                trControl = ctrl,
-                metric = metric,
-                ntree = 500,
-                verbose = FALSE)
+load("models/rf_mod.Rdata")
 
 # model accuracy ----------------------------------------------------------------------------
 
 roc_rf <- plot_roc(rf_mod$pred)
 
-ggroc(roc_rf, alpha = 0.5, colour = "green", size = 1.5)
+ggroc(roc_rf, alpha = 0.5, colour = "darkblue", size = 1.5)
 ```
 
-### Model 3 Performance
+### Model 3 Performance (Support Vector Machine)
 
 ```{r}
-set.seed(seed)
-svm_grid <- expand.grid(.C = .05,
-                          .sigma = .05)
-
-svm_mod <- train(
-     no_dummies,
-     data = churn_train,
-     method = "svmRadial",
-     metric = "ROC",
-     tuneGrid = svm_Grid,
-     trControl = ctrl
-)
+load("models/svm_mod.Rdata")
 
 # model accuracy ----------------------------------------------------------------------------
 
@@ -149,7 +100,7 @@ roc_svm <- plot_roc(svm_mod$pred)
 ggroc(roc_svm, alpha = 0.5, colour = "blue", size = 1.5)
 ```
 
-Column {data-width=650}
+Column {data-width=750}
 -----------------------------------------------------------------------
 
 ### Model Selection
@@ -177,14 +128,13 @@ test_res <- churn_test %>%
     dplyr::select(Churn) %>%
   mutate(Churn = factor(Churn)) %>%
     mutate(
-        pred = factor(predict(mars_mod, churn_test)),
-        No = predict(mars_mod, churn_test, type = "prob")[, "No"],
-        Yes = predict(mars_mod, churn_test, type = "prob")[, "Yes"]
+        pred = factor(predict(gbm_mod, churn_test)),
+        prob = predict(gbm_mod, churn_test, type = "prob")[, "Yes"]
     ) %>%
   data.frame
 roc_curve <- roc(test_res$Churn, test_res$prob, levels = c("No", "Yes"))
 
-prediction <- predict(mars_mod, churn_test %>% select(-Churn))
+prediction <- predict(gbm_mod, churn_test %>% select(-Churn))
 
 temp <- confusionMatrix(prediction, churn_test$Churn)
 ```
@@ -197,27 +147,33 @@ Column {data-width=650}
 
 We used Bayesian Hierarchical Linear Model to make our model selection. The distribution of the variance parameters are the prior distributions. The `tidyposterior` package, using *Stan*, is used to perform Bayesian analysis to estimate the probability distribution of the model parameters. Next, we make our decision looking at the difference between the models and selecting the best model that fits in our required business parameter or a practical value that represents our interest.
 
+### Why this model was chosen
 
-### Model Difference Visualization
+```{r, echo=FALSE}
+differences <-
+     contrast_models(
+          roc_mod,
+          list_1 = c("RndmFrst", "SVM"),
+          list_2 = c("Boosting", "RndmFrst"),
+          seed = 650
+     )
+
+summary(differences, size = 0.025)
+```
+
+### Testset Scoring (ROC)
 
 ```{r}
-ggroc(roc_curve, alpha = 0.5, colour = "blue", size = 1.5)
+ggroc(roc_curve, alpha = 0.5, colour = "green", size = 1.5)
 ```
 
 Column {data-width=350}
 -----------------------------------------------------------------------
 
-### Confusion Matrix {.value-box}
+### Confusion Matrix
 
 ```{r table}
-renderValueBox({
-  rate <- formatC(temp$table, digits = 0, format = "f")
-  valueBox(
-    value = rate,
-    icon = "fa-area-chart",
-    color = if (rate < 80) "warning" else "primary"
-  )
-})
+temp
 ```
 
 ### Sensitivity False Prediction rate of Member staying {.value-box}
@@ -227,21 +183,19 @@ renderValueBox({
   rate <- formatC(temp$byClass[1], digits = 2, format = "f")
   valueBox(
     value = rate,
-    icon = "fa-area-chart",
-    color = if (rate < 80) "warning" else "primary"
+    color = if (rate > 80.00) "warning" else "primary"
   )
 })
 ```
 
 ### Specificity - False Prediction rate of Member leaving {.value-box}
 
-```{r sens}
+```{r spec}
 renderValueBox({
   rate <- formatC(temp$byClass[2], digits = 2, format = "f")
   valueBox(
     value = rate,
-    icon = "fa-area-chart",
-    color = if (rate < 50) "warning" else "primary"
+    color = if (rate > 50.00) "warning" else "primary"
   )
 })
 ```

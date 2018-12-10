@@ -1,0 +1,62 @@
+---
+title: "MySHinyApp"
+author: "Eeshan Chatterjee"
+date: "Wednesday 25 March 2015"
+output: html_document
+runtime: shiny
+---
+
+```{r, echo=FALSE}
+library(shiny)
+library(tidyverse)
+library(ggROC)
+library(tidyposterior)
+library(pROC)
+library(caret)
+
+plot_roc <- function(x) {
+    averaged <- x %>%
+        group_by(rowIndex, obs) %>%
+        summarise(Yes = mean(Yes, na.rm = TRUE))
+    roc_obj <- roc(
+        response = x[["obs"]], 
+        predictor = x[["Yes"]], 
+        levels = rev(levels(x$obs))
+    )
+    return(roc_obj)
+}
+
+
+    
+load_Rdata <- function(){
+     if(is.null(input$file)) return(NULL)
+     inFile <- isolate({ input$file })
+     env <<- NULL
+     n.env  <- new.env()
+     env    <<- n.env
+     load(inFile$datapath, envir=n.env)
+
+     output$model1 <- reactive({
+          roc_gbm <- plot_roc(n.env$gbm_mod$pred)
+          ggroc(roc_gbm, alpha = 0.5, colour = "red", size = 1.5)
+     })
+}
+fileInput("file", label = "Rdata")
+
+observeEvent(input$btnLoad,{
+        load_Rdata()
+})
+actionButton(inputId="btnLoad","Load")
+
+plotOutput("model1")
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```

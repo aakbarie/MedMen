@@ -47,7 +47,7 @@ basic_rec <- recipe(Churn ~ ., data = churn_train) %>%
 metric <- "ROC"
 
 gbmGrid <- expand.grid(
-                       n.trees = seq(100, 500, 100),
+                       n.trees = 200,
                        interaction.depth = 2,
                        shrinkage = .07,
                        n.minobsinnode = 10)
@@ -93,14 +93,14 @@ plot_roc <- function(x) {
 roc_gbm <- plot_roc(gbm_mod$pred)
 roc_nb <- plot_roc(nb_mod$pred)
 roc_rf <- plot_roc(rf_mod$pred)
-ggroc(list(GBM=roc_gbm, NB=roc_nb))
+ggroc(list(GBM=roc_gbm, NB=roc_nb, rf=roc_rf))
 
 
 # Model 2 Setup ---------------------------------------------------------------------------------------------------
 
 set.seed(seed)
 
-rfGrid <- expand.grid(.mtry = seq(1, 10, 0.5))
+rfGrid <- expand.grid(.mtry = 2)
 
 
 # Model 2 run -----------------------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ rf_mod <- train(basic_rec,
                 tuneGrid = rfGrid,
                 trControl = ctrl,
                 metric = metric,
-                ntree = 1000,
+                ntree = 500,
                 verbose = FALSE)
 
 
@@ -120,7 +120,7 @@ rf_mod <- train(basic_rec,
 ggplot(rf_mod) + theme(legend.position = "top")   
 
 plot_roc(gbm_mod$pred)
-plot_roc(rf_mod$pred, col = "red", add = TRUE)
+plot_roc(rf_mod$pred)
 
 
 # Model 3 ---------------------------------------------------------------------------------------------------------
@@ -136,7 +136,7 @@ no_dummies <- recipe(Churn ~ ., data = churn_train) %>%
 
 nbGrid <- expand.grid(usekernel = TRUE,
                               fL = 0.4, 
-                              adjust = seq(0.5, 5, by = 0.5))
+                              adjust = c(0.5))
 
 nb_mod <- train(
      no_dummies,
@@ -195,14 +195,15 @@ differences <-
           seed = 650
      )
 
-summary(differences, size = 0.025)
+dif<- summary(differences, size = 0.05)
+
 
 
 differences %>%
      mutate(contrast = paste(model_2, "vs", model_1)) %>%
      ggplot(aes(x = difference, col = contrast)) + 
      geom_line(stat = "density") + 
-     geom_vline(xintercept = c(-0.025, 0.025), lty = 2)
+     geom_vline(xintercept = c(-0.05, 0.05), lty = 2)
 
 
 test_res <- churn_test %>%
